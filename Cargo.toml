@@ -1,0 +1,44 @@
+[package]
+name = "dragonflybot"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dragonflybot-grpc-server"
+path = "src/bin/grpc_server.rs"
+
+[[bin]]
+name = "dragonflybot-grpc-client"
+path = "src/bin/grpc_client.rs"
+
+[profile.performance]
+codegen-units = 1
+inherits = "release"
+incremental = false
+lto = "fat"
+panic = "abort"
+strip = true
+
+[dependencies]
+array-init = "2.1.0"
+async-trait = "0.1.68"
+async-stream = "0.3.5"
+clap = { version = "4.3.3", features = ["derive"] }
+error-stack = "0.3.1"
+fastwebsockets = { version = "0.4.2", features = ["upgrade"] }
+gjson = "0.8"
+hyper = {version = "0.14.26", features = ["http1", "client"]}
+ordered-float = { version = "3.0", default-features = false }
+prost = "0.11"
+rust_decimal = "1.29.1"
+serde_json = "1.0"
+strum = { version = "0.24", features = ["derive"] }
+tikv-jemallocator = "0.5"
+tonic = "0.9.2"
+tokio = {version = "1.28.2", features = ["io-std", "macros", "net", "rt-multi-thread", "signal", "sync"]}
+tokio-rustls = "0.24.0"
+tokio-stream = "0.1.14"
+webpki-roots = "0.23.1"
+
+[build-dependencies]
+tonic-build = "0.9.2"
