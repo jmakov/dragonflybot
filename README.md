@@ -122,7 +122,7 @@ docker run \
   --user="$(id -u):$(id -u)" \
   --group-add="$(id -u)" \
   --net="host" \
-  dragonflybot_dev:latest \
+  dragonflybot:latest \
   dragonflybot-grpc-client
   
   # to stop containers
