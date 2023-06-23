@@ -90,7 +90,7 @@ message i.e. read only the frames needed to get top N BBO.
 
 ### JSON document parsing
 Since we're only interested in top level access (getting bids/asks), we can go with property based 
-parsing libs which are [up to 4x faster than libs which parse the whole JSON](https://github.com/AnnikaCodes/rust-json-parsing-benchmarks).
+parsing libs which are [up to 10x faster than libs which parse the whole JSON](https://github.com/AnnikaCodes/rust-json-parsing-benchmarks).
 
 ### Alternative allocators
 `tikv-jemallocator` is used for improving the performance of allocations.
@@ -110,7 +110,7 @@ To run an example where we aggregate order books and publish top 10 via a gRPC s
 
 # Docker
 # A dev build image is available
-DOCKER_BUILDKIT=1 docker build --build-arg "BUILD_PROFILE=dev" -t dragonflybot_dev:latest .
+DOCKER_BUILDKIT=1 docker build -t dragonflybot:latest .
 
 # run the server in the background
 `docker run \
@@ -119,7 +119,7 @@ DOCKER_BUILDKIT=1 docker build --build-arg "BUILD_PROFILE=dev" -t dragonflybot_d
   --user="$(id -u):$(id -u)" \
   --group-add="$(id -u)" \
   -p 127.0.0.1:50051:50051 \
-  dragonflybot_dev:latest \
+  dragonflybot:latest \
   dragonflybot-grpc-server --instrument-name ethbtc `&
  
  # run the gRPC client
@@ -129,7 +129,7 @@ DOCKER_BUILDKIT=1 docker build --build-arg "BUILD_PROFILE=dev" -t dragonflybot_d
   --user="$(id -u):$(id -u)" \
   --group-add="$(id -u)" \
   --net="host" \
-  dragonflybot_dev:latest \
+  dragonflybot:latest \
   dragonflybot-grpc-client
   
   # to stop containers
