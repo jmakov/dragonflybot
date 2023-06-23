@@ -43,12 +43,10 @@ pub trait ListenerManager: Send {
         let msg_offset = self.get_listener().get_msg_offset_orderbook();
         if old_msg[msg_offset..] == new_msg[msg_offset..] {false} else {true}
     }
-    fn parse_order(&self, feed: constants::Feed, order: Vec<gjson::Value>) -> Box<util::Order> {
+    fn parse_order(&self, feed: constants::Feed, order: Vec<gjson::Value>) -> util::Order {
         let price = rust_decimal::Decimal::from_str(order[0].str()).expect("Expected a string float");
         let amount = rust_decimal::Decimal::from_str(order[1].str()).expect("Expected a string float");
-
-        //we might want to use a memory pool
-        Box::new(util::Order{feed, price, amount})
+        util::Order{feed, price, amount}
     }
     /// Parses a snap of the order book msg
     ///
@@ -64,7 +62,7 @@ pub trait ListenerManager: Send {
     /// # Optimization considerations
     /// To get top N from the merged order book, we need to send only top N orders from each feed's
     /// order book.
-    fn parse_orderbook_snap(&self, feed: constants::Feed, msg: &str) -> Box<util::OrderBook> {
+    fn parse_orderbook_snap(&self, feed: constants::Feed, msg: &str) -> util::OrderBook {
         //we might want to get pre initialized arrays from the memory pool instead
         let mut asks: types::Orders = vec![];
         let mut bids: types::Orders = vec![];
@@ -85,8 +83,7 @@ pub trait ListenerManager: Send {
             bids.push(self.parse_order(feed, bid.array()));
         }
 
-        //we might want to use a memory pool instead
-        Box::new(util::OrderBook{asks, bids})
+        util::OrderBook{asks, bids}
     }
 
     /// Read the message from the feed. The whole message is returned (concatenated frames).

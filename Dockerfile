@@ -34,4 +34,4 @@ FROM branch-${BUILD_PROFILE} as after-condition
 # minimize the image from a couple GB to about 100MB
 FROM after-condition AS dragonflybot
 WORKDIR /usr/local/bin
-CMD ["dragonflybot-grpc-server"]
+CMD ["./dragonflybot-grpc-server"]

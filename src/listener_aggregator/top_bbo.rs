@@ -25,16 +25,16 @@ impl Aggregator {
         const RESERVED_SIZE:usize = constants::Feed::COUNT * queue_consumer::TOP_N_BBO;
 
         //all the order book data is already allocated, we just need a container for quick access
-        let mut orderbooks: [Box<util::OrderBook>; constants::Feed::COUNT] = array_init::array_init(
-            |_: usize| Box::new(init_dummy_orderbook()));
+        let mut orderbooks: [util::OrderBook; constants::Feed::COUNT] = array_init::array_init(
+            |_: usize| init_dummy_orderbook());
 
         loop {
             //We could allocate the vector before the loop but since we're storing references,
             // we'd have lifetime problems (the borrow checker doesn't recognize `.clear()`
             // dropping the refs). Another approach is using `std::mem::transmute` but that's
             // in the domain of unsafe code. Perhaps use a small memory pool.
-            let mut asks: Vec<&Box<util::Order>> = vec![];
-            let mut bids: Vec<&Box<util::Order>> = vec![];
+            let mut asks: Vec<&util::Order> = vec![];
+            let mut bids: Vec<&util::Order> = vec![];
             let mut asks_grpc: Vec<orderbook::Level> = vec![];
             let mut bids_grpc: Vec<orderbook::Level> = vec![];
             asks.reserve(RESERVED_SIZE);
@@ -109,14 +109,14 @@ fn init_dummy_orderbook() -> util::OrderBook {
     let mut bids: types::Orders = vec![];
 
     for _ in 0..queue_consumer::TOP_N_BBO {
-        asks.push(Box::new(util::Order{
+        asks.push(util::Order{
             feed: constants::Feed::BinanceSpot,
             //for the initial value we want a practically +inf value here so that we can avoid
             //checking if the first message has already been processed
             price: rust_decimal::Decimal::from(100_000_000),
             amount: rust_decimal::Decimal::from(0)
-        }));
-        bids.push(Box::new(util::Order::default()));
+        });
+        bids.push(util::Order::default());
     }
 
     util::OrderBook{asks, bids}

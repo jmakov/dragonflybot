@@ -9,5 +9,5 @@ pub type BoxedFeedOrderBook = Box<util::FeedOrderBook>;
 pub type QueueGRPCSender = mpsc::Sender<BoxedOrderbookSummary>;
 pub type QueueReceiver = mpsc::Receiver<BoxedFeedOrderBook>;
 pub type QueueSender = mpsc::Sender<BoxedFeedOrderBook>;
-pub type Orders = Vec<Box<util::Order>>;
+pub type Orders = Vec<util::Order>;
 pub type BoxedOrderbookSummary = Result<orderbook::Summary, tonic::Status>;

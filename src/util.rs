@@ -6,7 +6,7 @@ use crate::{constants, types};
 #[derive(Debug)]
 pub struct FeedOrderBook {
     pub feed: constants::Feed,
-    pub orderbook: Box<OrderBook>
+    pub orderbook: OrderBook
 }
 #[derive(Debug)]
 pub struct Order {
@@ -23,8 +23,8 @@ pub struct OrderBook {
 impl Default for OrderBook {
     fn default() -> Self {
         Self {
-            asks: vec![Box::new(Order::default())],
-            bids: vec![Box::new(Order::default())]
+            asks: vec![Order::default()],
+            bids: vec![Order::default()]
         }
     }
 }

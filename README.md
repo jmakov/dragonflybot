@@ -113,14 +113,14 @@ To run an example where we aggregate order books and publish top 10 via a gRPC s
 DOCKER_BUILDKIT=1 docker build --build-arg "BUILD_PROFILE=dev" -t dragonflybot_dev:latest .
 
 # run the server in the background
-docker run \
+`docker run \
   --name dragonflybot_grpc_server \
   --rm \
   --user="$(id -u):$(id -u)" \
   --group-add="$(id -u)" \
   -p 127.0.0.1:50051:50051 \
   dragonflybot_dev:latest \
-  dragonflybot-grpc-server --instrument-name ethbtc &
+  dragonflybot-grpc-server --instrument-name ethbtc `&
  
  # run the gRPC client
  docker run \
