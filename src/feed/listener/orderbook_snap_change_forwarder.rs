@@ -40,7 +40,7 @@ pub trait ListenerManager: Send {
     /// the whole message to the previous one but compare only the top of the message. If we decide
     /// to go that way, same invariants apply as mentioned in the #Details section.
     fn has_orderbook_changed(&self, old_msg: &str, new_msg: &str) -> bool {
-        let msg_offset = self.get_listener().get_msg_offset_orderbook();
+        let msg_offset = self.get_listener().msg_offset_orderbook_start;
         if old_msg[msg_offset..] == new_msg[msg_offset..] {false} else {true}
     }
     fn parse_order(&self, feed: constants::Feed, order: Vec<gjson::Value>) -> util::Order {
@@ -119,11 +119,6 @@ pub trait ListenerManager: Send {
         }
     }
 }
-trait Getter: Send {
-    fn get_feed(&self) -> &constants::Feed;
-    fn get_msg_offset_orderbook(&self) -> usize;
-    fn get_queue(&self) -> &types::QueueSender;
-}
 #[async_trait::async_trait]
 trait MsgReader: Send {
     /// Read the message from the feed
@@ -186,11 +181,7 @@ pub struct FeedListener {
     // locking for accessing it.
     // pub subscriber: Box<dyn subscriber::ws::Subscriber>
 }
-impl Getter for FeedListener {
-    fn get_feed(&self) -> &constants::Feed {&self.feed}
-    fn get_msg_offset_orderbook(&self) -> usize {self.msg_offset_orderbook_start}
-    fn get_queue(&self) -> &types::QueueSender {&self.queue}
-}
+
 
 #[cfg(test)]
 mod tests {
