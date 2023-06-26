@@ -105,27 +105,26 @@ For small vectors `SmallVec` could be used.
 To run an example where we aggregate order books and publish top 10 via a gRPC server:
 ```shell
 # start the gRPC server in the background
- cargo run --bin dragonflybot-grpc-server -- --instrument-name ethbtc&
+cargo run --bin dragonflybot-grpc-server -- --instrument-name ethbtc&
  
- # run the client
- cargo run --bin dragonflybot-grpc-client
+# run the client
+cargo run --bin dragonflybot-grpc-client
 
 # Docker
-# A dev build image is available
 DOCKER_BUILDKIT=1 docker build -t dragonflybot:latest .
 
 # run the server in the background
-`docker run \
+docker run \
   --name dragonflybot_grpc_server \
   --rm \
   --user="$(id -u):$(id -u)" \
   --group-add="$(id -u)" \
   -p 127.0.0.1:50051:50051 \
   dragonflybot:latest \
-  dragonflybot-grpc-server --instrument-name ethbtc `&
+  dragonflybot-grpc-server --instrument-name ethbtc &
  
- # run the gRPC client
- docker run \
+# run the gRPC client
+docker run \
   --name dragonflybot_grpc_client \
   --rm \
   --user="$(id -u):$(id -u)" \
@@ -134,8 +133,8 @@ DOCKER_BUILDKIT=1 docker build -t dragonflybot:latest .
   dragonflybot:latest \
   dragonflybot-grpc-client
   
-  # to stop containers
-  docker stop dragonflybot_grpc_client \
+# to stop containers
+docker stop dragonflybot_grpc_client \
   && docker stop dragonflybot_grpc_server
 ```
 
