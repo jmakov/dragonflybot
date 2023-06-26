@@ -91,6 +91,8 @@ message i.e. read only the frames needed to get top N BBO.
 ### JSON document parsing
 Since we're only interested in top level access (getting bids/asks), we can go with property based 
 parsing libs which are [up to 10x faster than libs which parse the whole JSON](https://github.com/AnnikaCodes/rust-json-parsing-benchmarks).
+Using property based parsing we also implement functionality of JSON stream parsers, parsing only the number of
+consecutive values needed i.e. for getting top 10 of the book, we parse only 10 values.
 
 ### Alternative allocators
 `tikv-jemallocator` is used for improving the performance of allocations.
