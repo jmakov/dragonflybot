@@ -3,7 +3,6 @@
 //! Consumes queue from `orderbook_snap_change_forwarder` listener.
 use std;
 
-use array_init;
 use rust_decimal;
 use rust_decimal::prelude::ToPrimitive;
 use strum::EnumCount;
@@ -25,8 +24,7 @@ impl Aggregator {
         const RESERVED_SIZE:usize = constants::Feed::COUNT * queue_consumer::TOP_N_BBO;
 
         //all the order book data is already allocated, we just need a container for quick access
-        let mut orderbooks: [util::OrderBook; constants::Feed::COUNT] = array_init::array_init(
-            |_: usize| init_dummy_orderbook());
+        let mut orderbooks = [util::OrderBookTopN::default(); constants::Feed::COUNT];
 
         loop {
             //We could allocate the vector before the loop but since we're storing references,
@@ -102,22 +100,4 @@ impl Aggregator {
             }
         }
     }
-}
-
-fn init_dummy_orderbook() -> util::OrderBook {
-    let mut asks: types::Orders = vec![];
-    let mut bids: types::Orders = vec![];
-
-    for _ in 0..queue_consumer::TOP_N_BBO {
-        asks.push(util::Order{
-            feed: constants::Feed::BinanceSpot,
-            //for the initial value we want a practically +inf value here so that we can avoid
-            //checking if the first message has already been processed
-            price: rust_decimal::Decimal::from(100_000_000),
-            amount: rust_decimal::Decimal::from(0)
-        });
-        bids.push(util::Order::default());
-    }
-
-    util::OrderBook{asks, bids}
 }

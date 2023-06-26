@@ -24,6 +24,26 @@ use crate::util;
 #[async_trait::async_trait]
 pub trait ListenerManager: Send {
     fn get_listener(&self) -> &FeedListener;
+
+    fn parse_json_array_slice(&self, feed: constants::Feed, msg: &str, gjson_path: &str) -> [util::Order; queue_consumer::TOP_N_BBO] {
+        //we might want to use a memory pool instead
+        let mut orders = [util::Order::default(); queue_consumer::TOP_N_BBO];
+        let value = gjson::get(msg, gjson_path);
+        let mut i: usize = 0;
+
+        value.each(|_, value| {
+            let tpl = value.array();
+            let order = &mut orders[i];
+            order.amount = rust_decimal::Decimal::from_str(tpl[1].str()).expect("Expected a string float");
+            order.feed = feed;
+            order.price = rust_decimal::Decimal::from_str(tpl[0].str()).expect("Expected a string float");
+
+            i += 1;
+            if i == queue_consumer::TOP_N_BBO {false} else {true}
+        });
+        return orders;
+    }
+
     /// Detects if anything in the order book has changed
     ///
     ///  # Details
@@ -43,11 +63,7 @@ pub trait ListenerManager: Send {
         let msg_offset = self.get_listener().msg_offset_orderbook_start;
         if old_msg[msg_offset..] == new_msg[msg_offset..] {false} else {true}
     }
-    fn parse_order(&self, feed: constants::Feed, order: Vec<gjson::Value>) -> util::Order {
-        let price = rust_decimal::Decimal::from_str(order[0].str()).expect("Expected a string float");
-        let amount = rust_decimal::Decimal::from_str(order[1].str()).expect("Expected a string float");
-        util::Order{feed, price, amount}
-    }
+
     /// Parses a snap of the order book msg
     ///
     /// # Warning
@@ -62,28 +78,10 @@ pub trait ListenerManager: Send {
     /// # Optimization considerations
     /// To get top N from the merged order book, we need to send only top N orders from each feed's
     /// order book.
-    fn parse_orderbook_snap(&self, feed: constants::Feed, msg: &str) -> util::OrderBook {
-        //we might want to get pre initialized arrays from the memory pool instead
-        let mut asks: types::Orders = vec![];
-        let mut bids: types::Orders = vec![];
-        asks.reserve(queue_consumer::TOP_N_BBO);
-        bids.reserve(queue_consumer::TOP_N_BBO);
-
-        let bind_json_asks = gjson::get(msg, "data.asks");
-        let bind_json_bids = gjson::get(msg, "data.bids");
-        let json_asks = bind_json_asks.array();
-        let json_bids = bind_json_bids.array();
-
-        for ask in &json_asks[0..queue_consumer::TOP_N_BBO] {
-            //Is this faster than iterating 2x over asks/bids (with a dedicated
-            // price/amount json path) and accessing the price or amount field directly?
-            asks.push(self.parse_order(feed, ask.array()));
-        }
-        for bid in &json_bids[0..queue_consumer::TOP_N_BBO] {
-            bids.push(self.parse_order(feed, bid.array()));
-        }
-
-        util::OrderBook{asks, bids}
+    fn parse_orderbook_snap(&self, feed: constants::Feed, msg: &str) -> util::OrderBookTopN {
+        let asks = self.parse_json_array_slice(feed, msg, "data.asks");
+        let bids = self.parse_json_array_slice(feed, msg, "data.bids");
+        util::OrderBookTopN {asks, bids}
     }
 
     /// Read the message from the feed. The whole message is returned (concatenated frames).
@@ -103,12 +101,10 @@ pub trait ListenerManager: Send {
                     if self.has_orderbook_changed(&old_msg, &msg) {
                         let orderbook = self.parse_orderbook_snap(feed, &msg);
                         let feed_orderbook = util::FeedOrderBook{feed, orderbook};
-
                         let queue = &self.get_listener().queue;
 
                         //we might want to use a memory pool instead of `Box`ing `feed_orderbook`
                         queue.send(Box::new(feed_orderbook)).await.unwrap();
-
                         old_msg = msg;
                     }
                 },

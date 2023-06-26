@@ -1,30 +1,30 @@
 use rust_decimal;
 
-use crate::{constants, types};
+use crate::constants;
 
 
 #[derive(Debug)]
 pub struct FeedOrderBook {
     pub feed: constants::Feed,
-    pub orderbook: OrderBook
+    pub orderbook: OrderBookTopN
 }
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Order {
     pub feed: constants::Feed,
     pub price: rust_decimal::Decimal,
     pub amount: rust_decimal::Decimal
 }
-#[derive(Debug)]
-pub struct OrderBook {
-    pub asks: types::Orders,
-    pub bids: types::Orders
+#[derive(Clone, Copy, Debug)]
+pub struct OrderBookTopN {
+    pub asks: [Order; constants::queue_consumer::TOP_N_BBO],
+    pub bids: [Order; constants::queue_consumer::TOP_N_BBO]
 }
 
-impl Default for OrderBook {
+impl Default for OrderBookTopN {
     fn default() -> Self {
         Self {
-            asks: vec![Order::default()],
-            bids: vec![Order::default()]
+            asks: [Order::default(); constants::queue_consumer::TOP_N_BBO],
+            bids: [Order::default(); constants::queue_consumer::TOP_N_BBO]
         }
     }
 }

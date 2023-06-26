@@ -20,7 +20,6 @@ panic = "abort"
 strip = true
 
 [dependencies]
-array-init = "2.1.0"
 async-trait = "0.1.68"
 async-stream = "0.3.5"
 clap = { version = "4.3.3", features = ["derive"] }
