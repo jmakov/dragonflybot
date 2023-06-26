@@ -22,7 +22,7 @@ pub struct Builder<'a> {feed: &'a constants::Feed}
 impl<'a> Builder<'a> {
     pub fn new(feed: &'a constants::Feed) -> Builder<'a> {Builder{feed}}
     pub async fn connect(&self) -> Box<dyn Subscriber> {
-        let feed_info = self.feed.get_details();
+        let feed_info = self.feed.get_feed_info();
         let client = client::ws::ClientManager::new(&feed_info).await.unwrap();
 
         match self.feed {

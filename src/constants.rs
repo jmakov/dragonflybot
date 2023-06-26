@@ -9,16 +9,16 @@ pub enum Feed {
     BitstampSpot
 }
 impl Feed {
-    pub fn get_details(&self) -> FeedInfo {
+    pub fn get_feed_info(&self) -> FeedInfo {
         match self {
-            Self::BinanceSpot => FeedInfo{domain: domain::BINANCE, path: path::BINANCE, port: port::BINANCE, protocol: &Protocol::WEBSOCKETS},
-            Self::BitstampSpot => FeedInfo{domain: domain::BITSTAMP, path: path::DEFAULT, port: port::DEFAULT, protocol: &Protocol::WEBSOCKETS},
+            Self::BinanceSpot => FeedInfo{domain: "stream.binance.com", path: "/stream", port: 9443, protocol: &Protocol::WEBSOCKETS},
+            Self::BitstampSpot => FeedInfo{domain: "ws.bitstamp.net", path: "", port: 443, protocol: &Protocol::WEBSOCKETS},
         }
     }
-    pub fn get_name_for_grpc_service(&self) -> String {
+    pub fn get_feed_name_for_grpc_service(&self) -> &str {
         match self {
-            Self::BinanceSpot => "binance".to_owned(),
-            Self::BitstampSpot => "bitstamp".to_owned()
+            Self::BinanceSpot => "binance",
+            Self::BitstampSpot => "bitstamp"
         }
     }
 }
@@ -58,17 +58,4 @@ pub mod queue_consumer {
 }
 pub mod service {
     pub const GRPC_SERVER_PORT: usize = 50051;
-}
-
-mod domain {
-    pub const BINANCE: &str = "stream.binance.com";
-    pub const BITSTAMP: &str = "ws.bitstamp.net";
-}
-mod port {
-    pub const DEFAULT: u16 = 443;
-    pub const BINANCE: u16 = 9443;
-}
-mod path {
-    pub const DEFAULT: &str = "";
-    pub const BINANCE: &str = "/stream";
 }
