@@ -119,13 +119,6 @@ pub trait ListenerManager: Send {
         }
     }
 }
-#[async_trait::async_trait]
-trait MsgReader: Send {
-    /// Read the message from the feed
-    ///
-    /// Returns only the whole message once all the frames are concatenated.
-    async fn read_msg(&mut self) -> Result<String, error::ClientError>;
-}
 
 /// Builder for this worker
 ///
