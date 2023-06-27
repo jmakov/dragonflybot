@@ -209,11 +209,11 @@ mod tests {
 
         #[test]
         fn test_orderbook_has_changed() {
-            let old_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG;
-            let new_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG;
-            new_msg.to_owned().push_str("new updated_field");
             let listener_manager = get_mock_listener_manager();
-            assert_eq!(listener_manager.has_orderbook_changed(new_msg, old_msg), false);
+            let old_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG;
+            let mut new_msg= old_msg.to_owned();
+            new_msg.push_str("new updated_field");
+            assert_eq!(listener_manager.has_orderbook_changed(&new_msg, old_msg), true);
         }
     }
 }
