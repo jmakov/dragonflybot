@@ -13,7 +13,7 @@ use error_stack::Result;
 use rust_decimal;
 
 use crate::constants;
-use crate::constants::queue_consumer;
+use crate::constants::feed_aggregator;
 use constants::listener::orderbook_snap_change_forwarder;
 use crate::error;
 use crate::feed::subscriber;
@@ -25,9 +25,9 @@ use crate::util;
 pub trait ListenerManager: Send {
     fn get_listener(&self) -> &FeedListener;
 
-    fn parse_json_array_slice(&self, feed: constants::Feed, msg: &str, gjson_path: &str) -> [util::Order; queue_consumer::TOP_N_BBO] {
+    fn parse_json_array_slice(&self, feed: constants::Feed, msg: &str, gjson_path: &str) -> [util::Order; feed_aggregator::TOP_N_BBO] {
         //we might want to use a memory pool instead
-        let mut orders = [util::Order::default(); queue_consumer::TOP_N_BBO];
+        let mut orders = [util::Order::default(); feed_aggregator::TOP_N_BBO];
         let value = gjson::get(msg, gjson_path);
         let mut i: usize = 0;
 
@@ -39,7 +39,7 @@ pub trait ListenerManager: Send {
             order.price = rust_decimal::Decimal::from_str(tpl[0].str()).expect("Expected a string float");
 
             i += 1;
-            if i == queue_consumer::TOP_N_BBO {false} else {true}
+            if i == feed_aggregator::TOP_N_BBO {false} else {true}
         });
         return orders;
     }

@@ -16,15 +16,15 @@ pub struct Order {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct OrderBookTopN {
-    pub asks: [Order; constants::queue_consumer::TOP_N_BBO],
-    pub bids: [Order; constants::queue_consumer::TOP_N_BBO]
+    pub asks: [Order; constants::feed_aggregator::TOP_N_BBO],
+    pub bids: [Order; constants::feed_aggregator::TOP_N_BBO]
 }
 
 impl Default for OrderBookTopN {
     fn default() -> Self {
         Self {
-            asks: [Order::default(); constants::queue_consumer::TOP_N_BBO],
-            bids: [Order::default(); constants::queue_consumer::TOP_N_BBO]
+            asks: [Order::default(); constants::feed_aggregator::TOP_N_BBO],
+            bids: [Order::default(); constants::feed_aggregator::TOP_N_BBO]
         }
     }
 }

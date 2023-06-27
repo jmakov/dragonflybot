@@ -2,6 +2,7 @@ use strum;
 
 
 pub const QUEUE_BUFFER_SIZE: usize = 1024 * 1024;
+pub const ORDER_PRICE_INF: i32 = 100_000_000; //a price not reachable by any fin. instrument
 
 #[derive(strum::EnumCount, strum::EnumIter, Clone, Copy, Debug, strum::Display)]
 pub enum Feed {
@@ -53,7 +54,7 @@ pub mod listener {
         }
     }
 }
-pub mod queue_consumer {
+pub mod feed_aggregator {
     pub const TOP_N_BBO: usize = 10;
 }
 pub mod service {

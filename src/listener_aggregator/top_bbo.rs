@@ -8,7 +8,7 @@ use rust_decimal::prelude::ToPrimitive;
 use strum::EnumCount;
 
 use crate::constants;
-use crate::constants::queue_consumer;
+use crate::constants::feed_aggregator;
 use crate::service::grpc::server::orderbook;
 use crate::types;
 use crate::util;
@@ -21,10 +21,8 @@ pub struct Aggregator {
 
 impl Aggregator {
     pub async fn run(&mut self) {
-        const RESERVED_SIZE:usize = constants::Feed::COUNT * queue_consumer::TOP_N_BBO;
-
-        //all the order book data is already allocated, we just need a container for quick access
-        let mut orderbooks = [util::OrderBookTopN::default(); constants::Feed::COUNT];
+        const RESERVED_SIZE:usize = constants::Feed::COUNT * feed_aggregator::TOP_N_BBO;
+        let mut orderbooks = get_initialized_orderbooks();
 
         loop {
             //We could allocate the vector before the loop but since we're storing references,
@@ -37,8 +35,8 @@ impl Aggregator {
             let mut bids_grpc: Vec<orderbook::Level> = vec![];
             asks.reserve(RESERVED_SIZE);
             bids.reserve(RESERVED_SIZE);
-            asks_grpc.reserve(queue_consumer::TOP_N_BBO);
-            bids_grpc.reserve(queue_consumer::TOP_N_BBO);
+            asks_grpc.reserve(feed_aggregator::TOP_N_BBO);
+            bids_grpc.reserve(feed_aggregator::TOP_N_BBO);
 
             let feed_orderbook = self.queue_feed_listener_rx
                 .recv()
@@ -54,17 +52,17 @@ impl Aggregator {
             // For that to be true, asks/bids need to be ordered (which we observe in the data we
             // receive).
             for orderbook in orderbooks.iter() {
-                let sliced_asks = &orderbook.asks[0..queue_consumer::TOP_N_BBO];
+                let sliced_asks = &orderbook.asks[0..feed_aggregator::TOP_N_BBO];
                 for order in sliced_asks.iter() {asks.push(order);}
 
-                let sliced_bids = &orderbook.bids[0..queue_consumer::TOP_N_BBO];
+                let sliced_bids = &orderbook.bids[0..feed_aggregator::TOP_N_BBO];
                 for order in sliced_bids.iter() {bids.push(order);}
             }
 
             asks.sort_by_key(|order| order.price);
             bids.sort_by_key(|order| std::cmp::Reverse(order.price));
 
-            for i in 0..queue_consumer::TOP_N_BBO {
+            for i in 0..feed_aggregator::TOP_N_BBO {
                 let ask = asks[i];
                 let bid = bids[i];
 
@@ -100,4 +98,23 @@ impl Aggregator {
             }
         }
     }
+}
+
+/// Initializes order books to highest asks and lowest bids
+///
+/// Since when the program starts, not all order books have the representable value of the market,
+/// the ordered results would include default values i.e. price = 0 for e.g. asks. To prevent that,
+/// we initialize the values to practically positive and negative infinities.
+fn get_initialized_orderbooks() -> [util::OrderBookTopN; constants::Feed::COUNT]{
+    let mut orderbooks = [util::OrderBookTopN::default(); constants::Feed::COUNT];
+
+    for orderbook in &mut orderbooks {
+        for order in &mut orderbook.asks {
+            order.price = rust_decimal::Decimal::from(constants::ORDER_PRICE_INF);
+        }
+        for order in &mut orderbook.bids {
+            order.price = rust_decimal::Decimal::from(-constants::ORDER_PRICE_INF);
+        }
+    }
+    return orderbooks;
 }
