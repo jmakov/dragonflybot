@@ -90,12 +90,11 @@ pub trait ListenerManager: Send {
     async fn read_msg(&mut self) -> Result<String, error::ClientError>;
 
     /// Entry point for the task, worker
-    async fn run(&mut self) -> Result<(), error::ListenerError>{
+    async fn run(&mut self) {
         let mut old_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG.to_owned();
         let feed = self.listener().feed.to_owned();
 
-        //skip first status msg so we can work only on subscribed msgs
-        let _ = self.read_msg().await;
+        // self.subscriber.
 
         loop {
             match self.read_msg().await {
@@ -113,12 +112,11 @@ pub trait ListenerManager: Send {
                         old_msg = msg;
                     }
                 },
-                Err(_) => {
-                    break;
+                Err(e) => {
+                    tracing::error!("Could not read from the queue: {}", e)
                 }
             };
         }
-        Ok(())
     }
 }
 

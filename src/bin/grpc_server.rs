@@ -65,7 +65,7 @@ fn main() -> Result<(), error::Error> {
                     feed, instrument_name, queue)
                     .subscribe()
                     .await;
-                let _ = listener.run().await;});
+                listener.run().await;});
     }
 
     //start the gRPC server

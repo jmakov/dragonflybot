@@ -13,7 +13,7 @@ use crate::feed::client;
 #[async_trait]
 pub trait Subscriber: Send {
     async fn read_msg(&mut self) -> Result<String, error::ClientError>;
-    async fn subscribe_to_l2_snap(&mut self, instrument_name: &str);
+    async fn subscribe_to_l2_snap(&mut self, instrument_name: &str) -> Result<(), error::SubscriberError>;
 }
 
 /// Builds a new, connected feed subscriber that's immediately usable

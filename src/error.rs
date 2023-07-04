@@ -11,11 +11,14 @@ pub struct ClientError;
 pub struct ListenerError;
 #[derive(Debug)]
 pub struct ListenerAggregatorError;
+#[derive(Debug)]
+pub struct SubscriberError;
 
 impl Context for Error {}
 impl Context for ClientError {}
 impl Context for ListenerError {}
 impl Context for ListenerAggregatorError {}
+impl Context for SubscriberError {}
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -35,5 +38,10 @@ impl fmt::Display for ListenerError {
 impl fmt::Display for ListenerAggregatorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ListenerAggregatorError")
+    }
+}
+impl fmt::Display for SubscriberError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SubscriberError")
     }
 }

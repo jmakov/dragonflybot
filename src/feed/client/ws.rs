@@ -45,12 +45,12 @@ impl ClientManager {
             )
         }
     }
+
     pub async fn send(&mut self, msg: &serde_json::Value) {
         let _ = self.client.write_frame(
             fastwebsockets::Frame::text(msg.to_string().as_bytes().to_vec().into()))
             .await;
     }
-
 }
 
 // `tokio` executor needed only to process the initial handshake where we upgrade to WS protocol
@@ -98,7 +98,7 @@ async fn get_ws_client(domain: &str, port: u16, path: &str)
         .body(hyper::Body::empty())
         .into_report()
         .change_context(error::ClientError)
-        .attach_printable("Failed building request").unwrap();
+        .attach_printable("Failed building request")?;
     let (mut ws, _) = fastwebsockets::handshake::client(
         &SpawnExecutor, req, tls_stream)
         .await
