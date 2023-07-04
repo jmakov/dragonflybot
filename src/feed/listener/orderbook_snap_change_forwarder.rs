@@ -11,6 +11,8 @@ use std::str::FromStr;
 use async_trait;
 use error_stack::Result;
 use rust_decimal;
+use tokio::sync::mpsc;
+use tracing;
 
 use crate::constants;
 use crate::constants::feed_aggregator;
@@ -23,7 +25,7 @@ use crate::util;
 
 #[async_trait::async_trait]
 pub trait ListenerManager: Send {
-    fn get_listener(&self) -> &FeedListener;
+    fn listener(&self) -> &FeedListener;
 
     fn parse_json_array_slice(&self, feed: constants::Feed, msg: &str, gjson_path: &str) -> [util::Order; feed_aggregator::TOP_N_BBO] {
         //we might want to use a memory pool instead
@@ -60,7 +62,7 @@ pub trait ListenerManager: Send {
     /// the whole message to the previous one but compare only the top of the message. If we decide
     /// to go that way, same invariants apply as mentioned in the #Details section.
     fn has_orderbook_changed(&self, old_msg: &str, new_msg: &str) -> bool {
-        let msg_offset = self.get_listener().msg_offset_orderbook_start;
+        let msg_offset = self.listener().msg_offset_orderbook_start;
         if old_msg[msg_offset..] == new_msg[msg_offset..] {false} else {true}
     }
 
@@ -88,9 +90,9 @@ pub trait ListenerManager: Send {
     async fn read_msg(&mut self) -> Result<String, error::ClientError>;
 
     /// Entry point for the task, worker
-    async fn run(&mut self) {
+    async fn run(&mut self) -> Result<(), error::ListenerError>{
         let mut old_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG.to_owned();
-        let feed = self.get_listener().feed.to_owned();
+        let feed = self.listener().feed.to_owned();
 
         //skip first status msg so we can work only on subscribed msgs
         let _ = self.read_msg().await;
@@ -101,10 +103,13 @@ pub trait ListenerManager: Send {
                     if self.has_orderbook_changed(&old_msg, &msg) {
                         let orderbook = self.parse_orderbook_snap(feed, &msg);
                         let feed_orderbook = util::FeedOrderBook{feed, orderbook};
-                        let queue = &self.get_listener().queue;
+                        let queue = &self.listener().queue;
 
                         //we might want to use a memory pool instead of `Box`ing `feed_orderbook`
-                        queue.send(Box::new(feed_orderbook)).await.unwrap();
+                        match queue.send(Box::new(feed_orderbook)).await {
+                            Ok(_) => {}
+                            Err(e) => {tracing::error!("Sending item to queue: {}", e)}
+                        }
                         old_msg = msg;
                     }
                 },
@@ -113,6 +118,7 @@ pub trait ListenerManager: Send {
                 }
             };
         }
+        Ok(())
     }
 }
 
@@ -123,10 +129,10 @@ pub trait ListenerManager: Send {
 pub struct Builder {
     feed: constants::Feed,
     instrument_name: String,
-    queue: types::QueueSender
+    queue: mpsc::Sender<types::BoxedFeedOrderBook>
 }
 impl Builder {
-    pub fn new(feed: constants::Feed, instrument_name: String, queue: types::QueueSender)
+    pub fn new(feed: constants::Feed, instrument_name: String, queue: mpsc::Sender<types::BoxedFeedOrderBook>)
         -> Builder {Builder{feed, instrument_name, queue}}
     pub async fn subscribe(self) -> Box<dyn ListenerManager> {
         let mut subscriber = subscriber::ws::Builder::new(&self.feed)
@@ -161,7 +167,7 @@ impl Builder {
 pub struct FeedListener {
     pub feed: constants::Feed,
     pub msg_offset_orderbook_start: usize,
-    pub queue: types::QueueSender
+    pub queue: mpsc::Sender<types::BoxedFeedOrderBook>
 
     // We could have add here also the subscriber for convenient access and reducing
     // code duplication. However it would require protected access in order to be
@@ -181,12 +187,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ListenerManager for MockListenerManager {
-        fn get_listener(&self) -> &FeedListener {&self.listener}
+        fn listener(&self) -> &FeedListener {&self.listener}
         async fn read_msg(&mut self) -> Result<String, ClientError> {Ok("".to_owned())}
     }
 
     fn get_mock_listener_manager() -> MockListenerManager {
-        let (tx, _) = tokio::sync::mpsc::channel::<types::BoxedFeedOrderBook>(constants::QUEUE_BUFFER_SIZE);
+        let (tx, _) = mpsc::channel::<types::BoxedFeedOrderBook>(constants::QUEUE_BUFFER_SIZE);
         MockListenerManager{
             listener: FeedListener{
                 feed: constants::Feed::BinanceSpot,

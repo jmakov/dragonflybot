@@ -13,6 +13,6 @@ pub struct ListenerManager {
 
 #[async_trait::async_trait]
 impl orderbook_snap_change_forwarder::ListenerManager for ListenerManager {
-    fn get_listener(&self) -> &orderbook_snap_change_forwarder::FeedListener {&self.listener}
+    fn listener(&self) -> &orderbook_snap_change_forwarder::FeedListener {&self.listener}
     async fn read_msg(&mut self) -> Result<String, error::ClientError> {self.subscriber.read_msg().await}
 }

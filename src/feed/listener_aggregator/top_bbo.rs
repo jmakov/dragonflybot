@@ -2,25 +2,29 @@
 //!
 //! Consumes queue from `orderbook_snap_change_forwarder` listener.
 use std;
+use std::sync::Arc;
 
+use error_stack::Result;
 use rust_decimal;
 use rust_decimal::prelude::ToPrimitive;
 use strum::EnumCount;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::constants;
 use crate::constants::feed_aggregator;
+use crate::error;
 use crate::service::grpc::server::orderbook;
 use crate::types;
 use crate::util;
 
 
 pub struct Aggregator {
-    pub queue_feed_listener_rx: types::QueueReceiver,
-    pub queue_grpc_tx: types::QueueGRPCSender
+    pub queue_rx: mpsc::Receiver<types::BoxedFeedOrderBook>,
+    pub queue_tx: Arc<broadcast::Sender<types::BoxedOrderbookSummary>>
 }
 
 impl Aggregator {
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<(), error::ListenerAggregatorError>{
         const RESERVED_SIZE:usize = constants::Feed::COUNT * feed_aggregator::TOP_N_BBO;
         let mut orderbooks = get_initialized_orderbooks();
 
@@ -38,10 +42,7 @@ impl Aggregator {
             asks_grpc.reserve(feed_aggregator::TOP_N_BBO);
             bids_grpc.reserve(feed_aggregator::TOP_N_BBO);
 
-            let feed_orderbook = self.queue_feed_listener_rx
-                .recv()
-                .await
-                .expect("Could not receive from the queue");
+            let feed_orderbook = self.queue_rx.recv().await.unwrap();
             let feed_id = feed_orderbook.feed as usize;
 
             //replace old order book reference with an updated one
@@ -88,12 +89,12 @@ impl Aggregator {
             //The top_bbo aggregator could send a more general message suitable for multiple consumers.
             //If that would be needed, we could introduce a transformer for the stream e.g. each
             //stream consumer would have it's own (async) transformer (method).
-            match self.queue_grpc_tx.send(Result::<_, tonic::Status>::Ok(orderbook_summary)).await {
+            match self.queue_tx.send(Box::new(orderbook_summary)) {
                 Ok(_) => {
-                    //the item is sent
+                    //msg is sent
                 }
-                Err(_orderbook_summary) => {
-                    break;  //the queue was dropped (on the other end) for some reason
+                Err(_) => {
+                    //nobody subscribed to this broadcast yet
                 }
             }
         }

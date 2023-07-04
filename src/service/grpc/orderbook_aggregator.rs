@@ -1,23 +1,19 @@
 use std;
 use std::pin;
 
-use strum::IntoEnumIterator;
+use tokio::sync::{broadcast, mpsc};
 use tokio_stream;
 use tokio_stream::wrappers;
 use tonic;
-use tokio::sync::mpsc;
+use tracing;
 
 use super::server::orderbook;
 use super::server::orderbook::orderbook_aggregator_server;
-use crate::listener_aggregator;
 use crate::constants;
-use crate::feed;
-use crate::types;
+use crate::util;
 
 
-
-#[derive(Debug)]
-pub struct OrderbookAggregatorService {pub instrument_name: String }
+pub struct OrderbookAggregatorService {pub context: util::GrpcClientContext}
 
 #[tonic::async_trait]
 impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregatorService {
@@ -26,34 +22,62 @@ impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregatorSer
 
     async fn book_summary(&self, _: tonic::Request<orderbook::Empty>)
                           -> Result<tonic::Response<Self::BookSummaryStream>, tonic::Status> {
-        let (tx_feed_listener, rx_orderbook_aggregator) =
-            mpsc::channel::<types::BoxedFeedOrderBook>(constants::QUEUE_BUFFER_SIZE);
-        let (tx_orderbook_aggregator, rx_grpc_service) =
-            mpsc::channel::<types::BoxedOrderbookSummary>(constants::QUEUE_BUFFER_SIZE);
+        tracing::info!("New client connected");
+        let mut broadcast_rx = self.context.broadcast_aggregator_tx.subscribe();
+        let (queue_grpc_tx, queue_grpc_rx) =
+            mpsc::channel::<Result::<orderbook::Summary, tonic::Status>>(constants::QUEUE_BUFFER_SIZE);
 
-        //simply iterate feeds we're interested in for this service and spawn new feed listeners
-        for feed in constants::Feed::iter() {
-            let queue = tx_feed_listener.clone();
-            let instrument_name = self.instrument_name.to_owned();
-
-            tokio::spawn(
-                async move {
-                    let mut listener = feed::listener::orderbook_snap_change_forwarder::Builder::new(
-                        feed, instrument_name, queue)
-                        .subscribe()
-                        .await;
-                    listener.run().await;});}
-
-        //spawn listener aggregator
         tokio::spawn(
             async move {
-                let mut listener_aggregator = listener_aggregator::top_bbo::Aggregator {
-                    queue_feed_listener_rx: rx_orderbook_aggregator,
-                    queue_grpc_tx: tx_orderbook_aggregator
-                };
-                listener_aggregator.run().await;});
-
-        let stream = wrappers::ReceiverStream::new(rx_grpc_service);
+                loop {
+                    match broadcast_rx.recv().await {
+                        Ok(orderbook_summary) => {
+                            match queue_grpc_tx.send(Result::<_, tonic::Status>::Ok(*orderbook_summary)).await {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    //client disconnected
+                                    tracing::info!("Client disconnected");
+                                    break
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            //If we lag behind, keep retrying until we get to the most recent data.
+                            loop {
+                                match broadcast_rx.recv().await {
+                                    Ok(orderbook_summary) => {
+                                        break match queue_grpc_tx.send(Result::<_, tonic::Status>::Ok(*orderbook_summary)).await {
+                                            Ok(_) => {}
+                                            Err(_) => {
+                                                //client disconnected
+                                                tracing::info!("Client disconnected");
+                                                break
+                                            }
+                                        }
+                                    }
+                                    Err(e) => { tracing::error!("Receiving from queue: {}", e); }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Receiving from queue: {}", e);
+                            match queue_grpc_tx.send(Result::<_, tonic::Status>::Err(
+                                tonic::Status::new(tonic::Code::Internal, "Streaming error"))).await {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    //client disconnected
+                                    tracing::info!("Client disconnected");
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        );
+        let stream = wrappers::ReceiverStream::new(queue_grpc_rx);
         Ok(tonic::Response::new(Box::pin(stream) as Self::BookSummaryStream))
     }
 }
+
+
