@@ -48,14 +48,17 @@ impl orderbook_aggregator_server::OrderbookAggregator for OrderbookAggregatorSer
                                     Ok(orderbook_summary) => {
                                         break match queue_grpc_tx.send(Result::<_, tonic::Status>::Ok(*orderbook_summary)).await {
                                             Ok(_) => {}
-                                            Err(_) => {
+                                            Err(e) => {
                                                 //client disconnected
-                                                tracing::info!("Client disconnected");
+                                                tracing::info!("Client disconnected: {}", e);
                                                 break
                                             }
                                         }
                                     }
-                                    Err(e) => { tracing::error!("Receiving from queue: {}", e); }
+                                    Err(_) => {
+                                        // we're lagging behind so continue with the loop until we
+                                        // get to the current item on the queue
+                                    }
                                 }
                             }
                         }

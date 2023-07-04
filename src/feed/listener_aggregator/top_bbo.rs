@@ -4,15 +4,14 @@
 use std;
 use std::sync::Arc;
 
-use error_stack::Result;
 use rust_decimal;
 use rust_decimal::prelude::ToPrimitive;
 use strum::EnumCount;
 use tokio::sync::{broadcast, mpsc};
+use tracing;
 
 use crate::constants;
 use crate::constants::feed_aggregator;
-use crate::error;
 use crate::service::grpc::server::orderbook;
 use crate::types;
 use crate::util;
@@ -24,78 +23,102 @@ pub struct Aggregator {
 }
 
 impl Aggregator {
-    pub async fn run(&mut self) -> Result<(), error::ListenerAggregatorError>{
+    /// Runs the aggregator task, should be run in it's own thread
+    ///
+    /// When there's backlog in the queue, we try to catch up to the latest market state before we
+    /// run the calculations.
+    pub fn run(&mut self) {
         const RESERVED_SIZE:usize = constants::Feed::COUNT * feed_aggregator::TOP_N_BBO;
         let mut orderbooks = get_initialized_orderbooks();
+        let mut new_update_available = false;
 
         loop {
-            //We could allocate the vector before the loop but since we're storing references,
-            // we'd have lifetime problems (the borrow checker doesn't recognize `.clear()`
-            // dropping the refs). Another approach is using `std::mem::transmute` but that's
-            // in the domain of unsafe code. Perhaps use a small memory pool.
-            let mut asks: Vec<&util::Order> = vec![];
-            let mut bids: Vec<&util::Order> = vec![];
-            let mut asks_grpc: Vec<orderbook::Level> = vec![];
-            let mut bids_grpc: Vec<orderbook::Level> = vec![];
-            asks.reserve(RESERVED_SIZE);
-            bids.reserve(RESERVED_SIZE);
-            asks_grpc.reserve(feed_aggregator::TOP_N_BBO);
-            bids_grpc.reserve(feed_aggregator::TOP_N_BBO);
+            // process backlog
+            loop {
+                match self.queue_rx.try_recv() {
+                    Ok(feed_orderbook) => {
+                        let feed_id = feed_orderbook.feed as usize;
 
-            let feed_orderbook = self.queue_rx.recv().await.unwrap();
-            let feed_id = feed_orderbook.feed as usize;
-
-            //replace old order book reference with an updated one
-            orderbooks[feed_id] = feed_orderbook.orderbook;
-
-            // Get top of the book from all books.
-            // We concatenate only top N asks/bids from all order books to get sorted top N.
-            // For that to be true, asks/bids need to be ordered (which we observe in the data we
-            // receive).
-            for orderbook in orderbooks.iter() {
-                let sliced_asks = &orderbook.asks[0..feed_aggregator::TOP_N_BBO];
-                for order in sliced_asks.iter() {asks.push(order);}
-
-                let sliced_bids = &orderbook.bids[0..feed_aggregator::TOP_N_BBO];
-                for order in sliced_bids.iter() {bids.push(order);}
+                        // replace old order book reference with an updated one
+                        orderbooks[feed_id] = feed_orderbook.orderbook;
+                        new_update_available = true;
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        // when all the backlog is processed, we should have a snapshot of latest
+                        // market state, continue with calculations
+                        break
+                    }
+                    Err(e) => {tracing::error!("Cannot receive from queue: {}", e)}
+                }
             }
 
-            asks.sort_by_key(|order| order.price);
-            bids.sort_by_key(|order| std::cmp::Reverse(order.price));
+            if new_update_available {
+                // We could allocate the vector before the loop but since we're storing references,
+                // we'd have lifetime problems (the borrow checker doesn't recognize `.clear()`
+                // dropping the refs). Another approach is using `std::mem::transmute` but that's
+                // in the domain of unsafe code. Perhaps use a small memory pool.
+                let mut asks: Vec<&util::Order> = vec![];
+                let mut bids: Vec<&util::Order> = vec![];
+                let mut asks_grpc: Vec<orderbook::Level> = vec![];
+                let mut bids_grpc: Vec<orderbook::Level> = vec![];
+                asks.reserve(RESERVED_SIZE);
+                bids.reserve(RESERVED_SIZE);
+                asks_grpc.reserve(feed_aggregator::TOP_N_BBO);
+                bids_grpc.reserve(feed_aggregator::TOP_N_BBO);
 
-            for i in 0..feed_aggregator::TOP_N_BBO {
-                let ask = asks[i];
-                let bid = bids[i];
+                // Get top of the book from all books.
+                // We concatenate only top N asks/bids from all order books to get sorted top N.
+                // For that to be true, asks/bids need to be ordered (which we observe in the data we
+                // receive).
+                for orderbook in orderbooks.iter() {
+                    let sliced_asks = &orderbook.asks[0..feed_aggregator::TOP_N_BBO];
+                    for order in sliced_asks.iter() { asks.push(order); }
 
-                //consider using a memory pool
-                asks_grpc.push(
-                    orderbook::Level{
-                        exchange: ask.feed.get_feed_name_for_grpc_service().to_owned(),
-                        price: ask.price.to_f64().unwrap(),
-                        amount: ask.amount.to_f64().unwrap()});
-                bids_grpc.push(
-                    orderbook::Level{
-                        exchange: bid.feed.get_feed_name_for_grpc_service().to_owned(),
-                        price: bid.price.to_f64().unwrap(),
-                        amount: bid.amount.to_f64().unwrap()});
-            }
+                    let sliced_bids = &orderbook.bids[0..feed_aggregator::TOP_N_BBO];
+                    for order in sliced_bids.iter() { bids.push(order); }
+                }
 
-            let spread = asks[0].price - bids[0].price;
-            let orderbook_summary = orderbook::Summary {
+                asks.sort_by_key(|order| order.price);
+                bids.sort_by_key(|order| std::cmp::Reverse(order.price));
+
+                for i in 0..feed_aggregator::TOP_N_BBO {
+                    let ask = asks[i];
+                    let bid = bids[i];
+
+                    //consider using a memory pool
+                    asks_grpc.push(
+                        orderbook::Level {
+                            exchange: ask.feed.get_feed_name_for_grpc_service().to_owned(),
+                            price: ask.price.to_f64().unwrap(),
+                            amount: ask.amount.to_f64().unwrap()
+                        });
+                    bids_grpc.push(
+                        orderbook::Level {
+                            exchange: bid.feed.get_feed_name_for_grpc_service().to_owned(),
+                            price: bid.price.to_f64().unwrap(),
+                            amount: bid.amount.to_f64().unwrap()
+                        });
+                }
+
+                let spread = asks[0].price - bids[0].price;
+                let orderbook_summary = orderbook::Summary {
                     spread: spread.to_f64().unwrap(),
                     asks: asks_grpc,
-                    bids: bids_grpc};
+                    bids: bids_grpc
+                };
 
-            //The top_bbo aggregator could send a more general message suitable for multiple consumers.
-            //If that would be needed, we could introduce a transformer for the stream e.g. each
-            //stream consumer would have it's own (async) transformer (method).
-            match self.queue_tx.send(Box::new(orderbook_summary)) {
-                Ok(_) => {
-                    //msg is sent
+                //The top_bbo aggregator could send a more general message suitable for multiple consumers.
+                //If that would be needed, we could introduce a transformer for the stream e.g. each
+                //stream consumer would have it's own (async) transformer (method).
+                match self.queue_tx.send(Box::new(orderbook_summary)) {
+                    Ok(_) => {
+                        //msg is sent
+                    }
+                    Err(_) => {
+                        //nobody subscribed to this broadcast yet
+                    }
                 }
-                Err(_) => {
-                    //nobody subscribed to this broadcast yet
-                }
+                new_update_available = false;
             }
         }
     }

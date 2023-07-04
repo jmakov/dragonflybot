@@ -68,17 +68,8 @@ fn main() -> Result<(), error::Error> {
                 let _ = listener.run().await;});
     }
 
-    //spawn listener aggregator
+    //start the gRPC server
     threaded_runtime.spawn(
-        async move {
-            let mut listener_aggregator = feed::listener_aggregator::top_bbo::Aggregator {
-                queue_rx: queue_aggregator_rx,
-                queue_tx: broadcast_aggregator_tx
-            };
-            let _ = listener_aggregator.run().await;});
-
-    //start the root task from which we'll spawn new tasks
-    threaded_runtime.block_on(
         tonic::transport::Server::builder()
             .add_service(
                 orderbook_aggregator_server::OrderbookAggregatorServer::new(
@@ -89,7 +80,17 @@ fn main() -> Result<(), error::Error> {
                         }
                     }}))
             .serve(addr)
-    ).unwrap();
+    );
+
+    // run the aggregator in it's own thread
+    let handle_thread = std::thread::spawn(||{
+        let mut listener_aggregator = feed::listener_aggregator::top_bbo::Aggregator {
+            queue_rx: queue_aggregator_rx,
+            queue_tx: broadcast_aggregator_tx
+        };
+        listener_aggregator.run();
+    });
+    handle_thread.join().unwrap();
 
     Ok(())
 }
