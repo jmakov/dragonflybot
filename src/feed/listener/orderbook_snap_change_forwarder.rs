@@ -88,6 +88,28 @@ where ws::Subscriber<'a, T>: Subscribe, Self: ParseMsg {
         Ok(Listener::<'a, T>{feed, msg_offset_orderbook_start, subscriber, queue_tx, instrument_name})
     }
 
+    /// Notifies downstream to exclude this feed from the gRPC stream.
+    ///
+    /// In an event of an error or a reconnect, we don't want to propagate the error or stall the
+    /// downstream updates causing calculations that result in states that don't represent the
+    /// current market state. So in cases that require some time to recover e.g. reconnects, we
+    /// update downstream with unreachable prices. Since downstream is sorting by (price, amount)
+    /// this effectively causes our feed to be taken out of the resulting stream. And the gRPC
+    /// client doesn't sees the stale data (no data for this feed until we recover).
+    async fn exclude_listener_from_grpc_stream(&mut self) {
+        tracing::warn!("Excluding feed from gRPC stream: {}", self.feed);
+
+        let mut orderbook= util::OrderBookTopN::default();
+        orderbook.set_unreachable_price();
+
+        let feed_orderbook = util::FeedOrderBook{feed: self.feed.to_owned(), orderbook};
+
+        match &self.queue_tx.send(Box::new(feed_orderbook)).await {
+            Ok(_) => {}
+            Err(e) => {tracing::error!("Cannot send item to queue: {}", e)}
+        }
+    }
+
     /// Detects if anything in the order book has changed
     ///
     ///  # Details
@@ -130,9 +152,14 @@ where ws::Subscriber<'a, T>: Subscribe, Self: ParseMsg {
                     }
                 },
                 Err(e) => {
+                    tracing::error!("Error reading from WebSockets: {}", e);
+                    self.exclude_listener_from_grpc_stream().await;
+
                     match e.current_context() {
                         error::ClientError::EndpointClosedConnection => {
                             tracing::info!("WebSocket endpoint has closed the connection, attempting to reconnect to feed: {}", self.feed);
+
+                            // try to reestablish previous state
                             self.subscriber.client.reconnect().await
                                 .change_context(error::ListenerError)?;
                             self.subscriber.subscribe_to_l2_snap(&self.instrument_name).await

@@ -41,6 +41,16 @@ impl Default for OrderBookTopN {
         }
     }
 }
+impl OrderBookTopN {
+    pub fn set_unreachable_price(&mut self) {
+        for order in &mut self.asks {
+            order.price = rust_decimal::Decimal::from(constants::ORDER_PRICE_INF);
+        }
+        for order in &mut self.bids {
+            order.price = rust_decimal::Decimal::from(-constants::ORDER_PRICE_INF);
+        }
+    }
+}
 
 pub struct GrpcClientContext {
     pub instrument_name: String,

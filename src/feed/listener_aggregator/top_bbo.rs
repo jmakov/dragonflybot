@@ -78,20 +78,18 @@ impl Aggregator {
                     for order in sliced_bids.iter() { bids.push(order); }
                 }
 
-                asks.sort_by_key(|order| order.price);
-                bids.sort_by_key(|order| std::cmp::Reverse(order.price));
+                asks.sort_by_key(|order| (order.price, order.amount));
+                bids.sort_by_key(|order| std::cmp::Reverse((order.price, order.amount)));
 
-                for i in 0..feed_aggregator::TOP_N_BBO {
-                    let ask = asks[i];
-                    let bid = bids[i];
-
-                    //consider using a memory pool
+                for ask in &asks {
                     asks_grpc.push(
                         orderbook::Level {
                             exchange: ask.feed.feed_name_for_grpc_service().to_owned(),
                             price: ask.price.to_f64().unwrap(),
                             amount: ask.amount.to_f64().unwrap()
                         });
+                }
+                for bid in &bids {
                     bids_grpc.push(
                         orderbook::Level {
                             exchange: bid.feed.feed_name_for_grpc_service().to_owned(),
@@ -132,13 +130,6 @@ impl Aggregator {
 fn get_initialized_orderbooks() -> [util::OrderBookTopN; constants::Feed::COUNT]{
     let mut orderbooks = [util::OrderBookTopN::default(); constants::Feed::COUNT];
 
-    for orderbook in &mut orderbooks {
-        for order in &mut orderbook.asks {
-            order.price = rust_decimal::Decimal::from(constants::ORDER_PRICE_INF);
-        }
-        for order in &mut orderbook.bids {
-            order.price = rust_decimal::Decimal::from(-constants::ORDER_PRICE_INF);
-        }
-    }
+    for orderbook in &mut orderbooks {orderbook.set_unreachable_price();}
     return orderbooks;
 }
