@@ -4,26 +4,6 @@ use strum;
 pub const QUEUE_BUFFER_SIZE: usize = 1024 * 1024;
 pub const ORDER_PRICE_INF: i32 = 100_000_000; //a price not reachable by any fin. instrument
 
-#[derive(strum::EnumCount, strum::EnumIter, Clone, Copy, Debug, strum::Display)]
-pub enum Feed {
-    BinanceSpot,
-    BitstampSpot
-}
-impl Feed {
-    pub fn get_feed_info(&self) -> FeedInfo {
-        match self {
-            Self::BinanceSpot => FeedInfo{domain: "stream.binance.com", path: "/stream", port: 9443, protocol: &Protocol::WEBSOCKETS},
-            Self::BitstampSpot => FeedInfo{domain: "ws.bitstamp.net", path: "", port: 443, protocol: &Protocol::WEBSOCKETS},
-        }
-    }
-    pub fn get_feed_name_for_grpc_service(&self) -> &str {
-        match self {
-            Self::BinanceSpot => "binance",
-            Self::BitstampSpot => "bitstamp"
-        }
-    }
-}
-
 pub enum Protocol {
     // ARROWHEAD,  //Tokio Stock Exchange
     // BOE,    //Chicago options
@@ -35,13 +15,6 @@ pub enum Protocol {
     // T7ETI,  //Xetra (Frankfurt Stock Exchange)
     // UTP,    //Warshaw Stock Exchange
     WEBSOCKETS
-}
-
-pub struct FeedInfo<'a> {
-    pub domain: &'a str,
-    pub path: &'a str,
-    pub port: u16,
-    pub protocol: &'a Protocol
 }
 
 pub mod listener {
@@ -59,4 +32,39 @@ pub mod feed_aggregator {
 }
 pub mod service {
     pub const GRPC_SERVER_PORT: usize = 50051;
+}
+
+pub struct FeedInfo<'a> {
+    pub domain: &'a str,
+    pub path: &'a str,
+    pub port: u16,
+    pub protocol: Protocol
+}
+
+#[derive(strum::EnumCount, strum::EnumIter, Clone, Copy, Debug, strum::Display)]
+pub enum Feed {
+    BinanceSpot,
+    BitstampSpot
+}
+impl Feed {
+    pub fn feed_info(&self) -> FeedInfo<'static> {
+        match self {
+            Feed::BinanceSpot => FeedInfo{domain: "stream.binance.com", path: "/stream", port: 9443, protocol: Protocol::WEBSOCKETS},
+            Feed::BitstampSpot => FeedInfo{domain: "ws.bitstamp.net", path: "", port: 443, protocol: Protocol::WEBSOCKETS},
+        }
+    }
+    pub fn feed_name_for_grpc_service(&self) -> &str {
+        match self {
+            Feed::BinanceSpot => "binance",
+            Feed::BitstampSpot => "bitstamp"
+        }
+    }
+}
+
+pub mod feed {
+    // create a binding/contract so only these types can be used in listeners and subscribers
+    pub trait Feed {}
+
+    pub struct BinanceSpot {} impl Feed for BinanceSpot {}
+    pub struct BitstampSpot {} impl Feed for BitstampSpot {}
 }

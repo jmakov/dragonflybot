@@ -6,27 +6,29 @@
 mod binance;
 mod bitstamp;
 
+use std;
 use std::str::FromStr;
 
 use async_trait;
-use error_stack::Result;
+use error_stack::{Result, ResultExt};
 use rust_decimal;
+use tokio;
 use tokio::sync::mpsc;
 use tracing;
 
 use crate::constants;
+use crate::constants::feed;
 use crate::constants::feed_aggregator;
 use constants::listener::orderbook_snap_change_forwarder;
 use crate::error;
-use crate::feed::subscriber;
+use crate::feed::subscriber::ws;
+use crate::feed::subscriber::ws::Subscribe;
 use crate::types;
 use crate::util;
 
 
 #[async_trait::async_trait]
-pub trait ListenerManager: Send {
-    fn listener(&self) -> &FeedListener;
-
+pub trait ParseMsg: Send {
     fn parse_json_array_slice(&self, feed: constants::Feed, msg: &str, gjson_path: &str) -> [util::Order; feed_aggregator::TOP_N_BBO] {
         //we might want to use a memory pool instead
         let mut orders = [util::Order::default(); feed_aggregator::TOP_N_BBO];
@@ -44,26 +46,6 @@ pub trait ListenerManager: Send {
             if i == feed_aggregator::TOP_N_BBO {false} else {true}
         });
         return orders;
-    }
-
-    /// Detects if anything in the order book has changed
-    ///
-    ///  # Details
-    /// We can reduce this problem to string slice comparison i.e. we don't need to waste resources
-    /// parsing, ordering and comparing the data. Note that this holds only for certain feeds and might
-    /// not be true in general. It can work for feeds where we notice that:
-    ///     - bids and asks are already price ordered
-    ///     - bid and ask fields are at predictable positions
-    ///     - other fields (timestamp, instrument_name, etc.) are at predictable positions
-    ///     - field positions aren't changing
-    ///
-    /// # Optimization opportunities
-    /// Since we're interested only in the change in top of the order book, we could avoid comparing
-    /// the whole message to the previous one but compare only the top of the message. If we decide
-    /// to go that way, same invariants apply as mentioned in the #Details section.
-    fn has_orderbook_changed(&self, old_msg: &str, new_msg: &str) -> bool {
-        let msg_offset = self.listener().msg_offset_orderbook_start;
-        if old_msg[msg_offset..] == new_msg[msg_offset..] {false} else {true}
     }
 
     /// Parses a snap of the order book msg
@@ -85,94 +67,84 @@ pub trait ListenerManager: Send {
         let bids = self.parse_json_array_slice(feed, msg, "data.bids");
         util::OrderBookTopN {asks, bids}
     }
+}
 
-    /// Read the message from the feed. The whole message is returned (concatenated frames).
-    async fn read_msg(&mut self) -> Result<String, error::ClientError>;
 
-    /// Entry point for the task, worker
-    async fn run(&mut self) {
+pub struct Listener<'a, T: feed::Feed> {
+    feed: constants::Feed,
+    instrument_name: String,
+    msg_offset_orderbook_start: usize,
+    subscriber: ws::Subscriber<'a, T>,
+    queue_tx: mpsc::Sender<types::BoxedFeedOrderBook>
+}
+
+impl<'a, T: feed::Feed> Listener<'a, T>
+where ws::Subscriber<'a, T>: Subscribe, Self: ParseMsg {
+    pub async fn new(feed: constants::Feed, queue_tx: mpsc::Sender<types::BoxedFeedOrderBook>,
+                     msg_offset_orderbook_start: usize, instrument_name: String)
+        -> Result<Listener<'a, T>, error::ListenerError> {
+        let subscriber = ws::Subscriber::<'a, T>::new(feed.feed_info()).await
+                .change_context(error::ListenerError)?;
+        Ok(Listener::<'a, T>{feed, msg_offset_orderbook_start, subscriber, queue_tx, instrument_name})
+    }
+
+    /// Detects if anything in the order book has changed
+    ///
+    ///  # Details
+    /// We can reduce this problem to string slice comparison i.e. we don't need to waste resources
+    /// parsing, ordering and comparing the data. Note that this holds only for certain feeds and might
+    /// not be true in general. It can work for feeds where we notice that:
+    ///     - bids and asks are already price ordered
+    ///     - bid and ask fields are at predictable positions
+    ///     - other fields (timestamp, instrument_name, etc.) are at predictable positions
+    ///     - field positions aren't changing
+    ///
+    /// # Optimization opportunities
+    /// Since we're interested only in the change in top of the order book, we could avoid comparing
+    /// the whole message to the previous one but compare only the top of the message. If we decide
+    /// to go that way, same invariants apply as mentioned in the #Details section.
+    fn has_orderbook_changed(&self, old_msg: &str, new_msg: &str) -> bool {
+        if old_msg[self.msg_offset_orderbook_start..] == new_msg[self.msg_offset_orderbook_start..]
+            {false} else {true}
+    }
+
+    /// Entry point for the task - worker
+    pub async fn run(&mut self) -> Result<(), error::ListenerError> {
         let mut old_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG.to_owned();
-        let feed = self.listener().feed.to_owned();
-
-        // self.subscriber.
+        self.subscriber.subscribe_to_l2_snap(&self.instrument_name).await
+            .change_context(error::ListenerError)?;
 
         loop {
-            match self.read_msg().await {
+            match self.subscriber.client.read_msg().await {
                 Ok(msg) => {
                     if self.has_orderbook_changed(&old_msg, &msg) {
-                        let orderbook = self.parse_orderbook_snap(feed, &msg);
-                        let feed_orderbook = util::FeedOrderBook{feed, orderbook};
-                        let queue = &self.listener().queue;
+                        let orderbook = self.parse_orderbook_snap(self.feed.to_owned(), &msg);
+                        let feed_orderbook = util::FeedOrderBook{feed: self.feed.to_owned(), orderbook};
 
                         //we might want to use a memory pool instead of `Box`ing `feed_orderbook`
-                        match queue.send(Box::new(feed_orderbook)).await {
+                        match &self.queue_tx.send(Box::new(feed_orderbook)).await {
                             Ok(_) => {}
-                            Err(e) => {tracing::error!("Sending item to queue: {}", e)}
+                            Err(e) => {tracing::error!("Cannot send item to queue: {}", e)}
                         }
                         old_msg = msg;
                     }
                 },
                 Err(e) => {
-                    tracing::error!("Could not read from the queue: {}", e)
+                    match e.current_context() {
+                        error::ClientError::EndpointClosedConnection => {
+                            tracing::info!("WebSocket endpoint has closed the connection, attempting to reconnect to feed: {}", self.feed);
+                            self.subscriber.client.reconnect().await
+                                .change_context(error::ListenerError)?;
+                            self.subscriber.subscribe_to_l2_snap(&self.instrument_name).await
+                                .change_context(error::ListenerError)?;
+                        }
+                        error::ClientError::Error => {tracing::error!("Could not read from websockets: {}", e)}
+                        error::ClientError::ParsingError => {tracing::error!("Websockets msg could not be parsed: {}", e)}
+                    }
                 }
             };
         }
     }
-}
-
-/// Builder for this worker
-///
-/// The builder returns a worker that can immediately start - everything that is needed is being
-/// prepared and initialized here e.g. subscribing to feeds this worker needs.
-pub struct Builder {
-    feed: constants::Feed,
-    instrument_name: String,
-    queue: mpsc::Sender<types::BoxedFeedOrderBook>
-}
-impl Builder {
-    pub fn new(feed: constants::Feed, instrument_name: String, queue: mpsc::Sender<types::BoxedFeedOrderBook>)
-        -> Builder {Builder{feed, instrument_name, queue}}
-    pub async fn subscribe(self) -> Box<dyn ListenerManager> {
-        let mut subscriber = subscriber::ws::Builder::new(&self.feed)
-            .connect()
-            .await;
-        subscriber.subscribe_to_l2_snap(&self.instrument_name).await;
-
-        match self.feed {
-            constants::Feed::BinanceSpot => Box::new(
-                binance::ListenerManager {
-                    listener: FeedListener {
-                        feed: self.feed,
-                        msg_offset_orderbook_start: orderbook_snap_change_forwarder::msg_offset_orderbook_start::BINANCE,
-                        queue: self.queue},
-                    subscriber
-                }
-            ),
-            constants::Feed::BitstampSpot => Box::new(
-                bitstamp::ListenerManager {
-                    listener: FeedListener {
-                        feed: self.feed,
-                        msg_offset_orderbook_start: orderbook_snap_change_forwarder::msg_offset_orderbook_start::BITSTAMP,
-                        queue: self.queue},
-                    subscriber
-                }
-            )
-        }
-    }
-}
-
-///Hides fields into 1 struct so we avoid code duplication in `ListenerManager`s
-pub struct FeedListener {
-    pub feed: constants::Feed,
-    pub msg_offset_orderbook_start: usize,
-    pub queue: mpsc::Sender<types::BoxedFeedOrderBook>
-
-    // We could have add here also the subscriber for convenient access and reducing
-    // code duplication. However it would require protected access in order to be
-    // able to be shared amongst threads. Since this is on the hot path (calls the
-    // `read_msg` method, we move it to the worker structure where we don't need
-    // locking for accessing it.
-    // pub subscriber: Box<dyn subscriber::ws::Subscriber>
 }
 
 
@@ -181,43 +153,62 @@ mod tests {
     use super::*;
     use crate::error::ClientError;
 
-    struct MockListenerManager{listener: FeedListener}
 
-    #[async_trait::async_trait]
-    impl ListenerManager for MockListenerManager {
-        fn listener(&self) -> &FeedListener {&self.listener}
-        async fn read_msg(&mut self) -> Result<String, ClientError> {Ok("".to_owned())}
-    }
-
-    fn get_mock_listener_manager() -> MockListenerManager {
-        let (tx, _) = mpsc::channel::<types::BoxedFeedOrderBook>(constants::QUEUE_BUFFER_SIZE);
-        MockListenerManager{
-            listener: FeedListener{
-                feed: constants::Feed::BinanceSpot,
-                msg_offset_orderbook_start: orderbook_snap_change_forwarder::msg_offset_orderbook_start::BINANCE,
-                queue: tx
-            }
-        }
-    }
     //test different cases for this method
     mod has_orderbook_changed {
         use super::*;
 
-        #[test]
-        fn test_orderbook_not_changed() {
+        #[tokio::test]
+        async fn test_orderbook_not_changed() {
             let new_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG;
             let old_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG;
-            let listener_manager = get_mock_listener_manager();
-            assert_eq!(listener_manager.has_orderbook_changed(new_msg, old_msg), false);
+
+            let (tx_binance, _) = mpsc::channel::<types::BoxedFeedOrderBook>(constants::QUEUE_BUFFER_SIZE);
+            let tx_bitstamp = tx_binance.clone();
+            let cloned_instrument_name1 = "btceth".to_owned();
+            let cloned_instrument_name2 = cloned_instrument_name1.to_owned();
+            let binance_spot = Listener::<feed::BinanceSpot>::new(
+                constants::Feed::BinanceSpot,
+                tx_binance,
+                orderbook_snap_change_forwarder::msg_offset_orderbook_start::BINANCE,
+                cloned_instrument_name1,
+            ).await.expect("Cannot create listener");
+            let bitstamp_spot = Listener::<feed::BitstampSpot>::new(
+                constants::Feed::BitstampSpot,
+                tx_bitstamp,
+                orderbook_snap_change_forwarder::msg_offset_orderbook_start::BITSTAMP,
+                cloned_instrument_name2
+            ).await.expect("Cannot create listener");
+
+            assert_eq!(binance_spot.has_orderbook_changed(&new_msg, &old_msg), false);
+            assert_eq!(bitstamp_spot.has_orderbook_changed(&new_msg, &old_msg), false);
         }
 
-        #[test]
-        fn test_orderbook_has_changed() {
-            let listener_manager = get_mock_listener_manager();
+        #[tokio::test]
+        async fn test_orderbook_has_changed() {
+            let (tx_binance, _) = mpsc::channel::<types::BoxedFeedOrderBook>(constants::QUEUE_BUFFER_SIZE);
+            let tx_bitstamp = tx_binance.clone();
+            let cloned_instrument_name1 = "btceth".to_owned();
+            let cloned_instrument_name2 = cloned_instrument_name1.to_owned();
+            let binance_spot = Listener::<feed::BinanceSpot>::new(
+                constants::Feed::BinanceSpot,
+                tx_binance,
+                orderbook_snap_change_forwarder::msg_offset_orderbook_start::BINANCE,
+                cloned_instrument_name1,
+            ).await.expect("Cannot create listener");
+            let bitstamp_spot = Listener::<feed::BitstampSpot>::new(
+                constants::Feed::BitstampSpot,
+                tx_bitstamp,
+                orderbook_snap_change_forwarder::msg_offset_orderbook_start::BITSTAMP,
+                cloned_instrument_name2
+            ).await.expect("Cannot create listener");
+
             let old_msg = orderbook_snap_change_forwarder::INIT_DUMMY_MSG;
             let mut new_msg= old_msg.to_owned();
             new_msg.push_str("new updated_field");
-            assert_eq!(listener_manager.has_orderbook_changed(&new_msg, old_msg), true);
+
+            assert_eq!(binance_spot.has_orderbook_changed(&new_msg, &old_msg), true);
+            assert_eq!(bitstamp_spot.has_orderbook_changed(&new_msg, &old_msg), true);
         }
     }
 }

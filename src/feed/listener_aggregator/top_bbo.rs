@@ -88,13 +88,13 @@ impl Aggregator {
                     //consider using a memory pool
                     asks_grpc.push(
                         orderbook::Level {
-                            exchange: ask.feed.get_feed_name_for_grpc_service().to_owned(),
+                            exchange: ask.feed.feed_name_for_grpc_service().to_owned(),
                             price: ask.price.to_f64().unwrap(),
                             amount: ask.amount.to_f64().unwrap()
                         });
                     bids_grpc.push(
                         orderbook::Level {
-                            exchange: bid.feed.get_feed_name_for_grpc_service().to_owned(),
+                            exchange: bid.feed.feed_name_for_grpc_service().to_owned(),
                             price: bid.price.to_f64().unwrap(),
                             amount: bid.amount.to_f64().unwrap()
                         });

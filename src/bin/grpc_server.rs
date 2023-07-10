@@ -11,7 +11,6 @@ use dragonflybot::{constants, error, feed, service::grpc::orderbook_aggregator,
 use error_stack::{IntoReport, Result, ResultExt};
 use tokio::sync::{broadcast, mpsc};
 use tonic;
-use strum::IntoEnumIterator;
 use tracing;
 use tracing_subscriber;
 
@@ -23,6 +22,7 @@ struct Args {
     #[arg(short, long)]
     instrument_name: String,
 }
+
 
 fn main() -> Result<(), error::Error> {
     let args = Args::parse();
@@ -54,19 +54,33 @@ fn main() -> Result<(), error::Error> {
     let broadcast_aggregator_tx = Arc::new(broadcast_tx);
     let broadcast_aggregator_tx_clone = Arc::clone(&broadcast_aggregator_tx);
 
-    //simply iterate feeds we're interested in for this service and spawn new feed listeners
-    for feed in constants::Feed::iter() {
-        let instrument_name = instrument_name.to_owned();
-        let queue = queue_feed_listener_tx.clone();
+    //spawn listeners
+    let cloned_queue1 = queue_feed_listener_tx.clone();
+    let cloned_queue2 = queue_feed_listener_tx.clone();
+    let cloned_instrument_name1 = instrument_name.to_owned();
+    let cloned_instrument_name2 = instrument_name.to_owned();
 
-        threaded_runtime.spawn(
-            async move {
-                let mut listener = feed::listener::orderbook_snap_change_forwarder::Builder::new(
-                    feed, instrument_name, queue)
-                    .subscribe()
-                    .await;
-                listener.run().await;});
-    }
+    threaded_runtime.spawn(
+        async move {
+            let mut listener = feed::listener::orderbook_snap_change_forwarder::Listener::<constants::feed::BinanceSpot>::new(
+                constants::Feed::BinanceSpot,
+                cloned_queue1,
+                constants::listener::orderbook_snap_change_forwarder::msg_offset_orderbook_start::BINANCE,
+                cloned_instrument_name1
+            )
+                .await.expect("Could not create new listener");
+            let _ = listener.run().await;});
+    threaded_runtime.spawn(
+        async move {
+            let mut listener = feed::listener::orderbook_snap_change_forwarder::Listener::<constants::feed::BitstampSpot>::new(
+                constants::Feed::BitstampSpot,
+                cloned_queue2,
+                constants::listener::orderbook_snap_change_forwarder::msg_offset_orderbook_start::BITSTAMP,
+                cloned_instrument_name2
+            )
+                .await.expect("Could not create new listener");
+            let _ = listener.run().await;});
+
 
     //start the gRPC server
     threaded_runtime.spawn(

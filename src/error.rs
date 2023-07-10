@@ -6,7 +6,11 @@ use error_stack::Context;
 #[derive(Debug)]
 pub struct Error;
 #[derive(Debug)]
-pub struct ClientError;
+pub enum ClientError {
+    Error,
+    ParsingError,
+    EndpointClosedConnection
+}
 #[derive(Debug)]
 pub struct ListenerError;
 #[derive(Debug)]

@@ -1,18 +1,15 @@
-use async_trait::async_trait;
+use async_trait;
 use error_stack::{IntoReport, Result, ResultExt, Report};
 use serde_json;
 use tracing;
 
+use crate::constants::feed;
 use crate::error;
-use crate::feed::client;
-use crate::feed::subscriber;
+use crate::feed::subscriber::ws;
 
 
-pub struct FeedSubscriber {pub client: client::ws::ClientManager}
-
-#[async_trait]
-impl subscriber::ws::Subscriber for FeedSubscriber {
-    async fn read_msg(&mut self) -> Result<String, error::ClientError> {self.client.read_msg().await}
+#[async_trait::async_trait]
+impl<'a> ws::Subscribe for ws::Subscriber<'a, feed::BitstampSpot> {
     async fn subscribe_to_l2_snap(&mut self, instrument_name: &str) -> Result<(), error::SubscriberError> {
         let rq = serde_json::json!({
             "event": "bts:subscribe",

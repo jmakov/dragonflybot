@@ -6,14 +6,17 @@ use crate::error;
 use super::tls;
 
 
-pub struct ClientManager {client: fastwebsockets::FragmentCollector<hyper::upgrade::Upgraded>}
+pub struct ClientManager<'a> {
+    client: fastwebsockets::FragmentCollector<hyper::upgrade::Upgraded>,
+    feed_info: constants::FeedInfo<'a>
+}
 struct SpawnExecutor;
 
-impl ClientManager {
-    pub async fn new(feed_info: &constants::FeedInfo<'_>) -> Result<ClientManager, error::ClientError>  {
+impl<'a> ClientManager<'a> {
+    pub async fn new(feed_info: constants::FeedInfo<'a>) -> Result<ClientManager<'a>, error::ClientError>  {
         Ok(ClientManager {
-            client: get_ws_client(feed_info.domain, feed_info.port, feed_info.path).await?
-        })
+            client: get_ws_client(feed_info.domain, feed_info.port, feed_info.path).await?,
+            feed_info})
     }
 
     /// Returns the whole message as received, as `String`
@@ -28,22 +31,32 @@ impl ClientManager {
                     fastwebsockets::OpCode::Text => {
                         String::from_utf8(frame.payload.to_vec())
                             .into_report()
-                            .change_context(error::ClientError)
+                            .change_context(error::ClientError::ParsingError)
                             .attach_printable("Could not parse to string")
+                            .attach(frame)
+                    }
+                    fastwebsockets::OpCode::Close => {
+                        Err(Report::new(error::ClientError::EndpointClosedConnection))
                     }
                     _ => Err(
-                        Report::new(error::ClientError)
+                        Report::new(error::ClientError::Error)
                             .attach_printable("Unexpected opcode")
                             .attach(frame.opcode)
                     )
                 }
             }
             Err(e) => Err(
-                Report::new(error::ClientError)
+                Report::new(error::ClientError::Error)
                     .attach_printable("Cannot read frame")
                     .attach(e)
             )
         }
+    }
+
+    pub async fn reconnect(&mut self) -> Result<(), error::ClientError> {
+        self.client = get_ws_client(self.feed_info.domain, self.feed_info.port, self.feed_info.path)
+            .await?;
+        Ok(())
     }
 
     pub async fn send(&mut self, msg: &serde_json::Value) {
@@ -72,17 +85,17 @@ async fn get_ws_client(domain: &str, port: u16, path: &str)
     let tcp_stream = tokio::net::TcpStream::connect(&addr)
         .await
         .into_report()
-        .change_context(error::ClientError)
+        .change_context(error::ClientError::Error)
         .attach_printable("Establishing TCP stream failed")?;
 
     let domain_tls = tokio_rustls::rustls::ServerName::try_from(
         domain).map_err(|_| {
-        Report::new(error::ClientError).attach_printable("Invalid DNS name")})?;
+        Report::new(error::ClientError::Error).attach_printable("Invalid DNS name")})?;
     let tls_connector = tls::get_connector().unwrap();
     let tls_stream = tls_connector.connect(domain_tls, tcp_stream)
         .await
         .into_report()
-        .change_context(error::ClientError)
+        .change_context(error::ClientError::Error)
         .attach_printable("Could not establish TLS stream")?;
     let req = hyper::Request::builder()
         .method("GET")
@@ -97,13 +110,12 @@ async fn get_ws_client(domain: &str, port: u16, path: &str)
         .header("Sec-WebSocket-Version", "13")
         .body(hyper::Body::empty())
         .into_report()
-        .change_context(error::ClientError)
+        .change_context(error::ClientError::Error)
         .attach_printable("Failed building request")?;
     let (mut ws, _) = fastwebsockets::handshake::client(
         &SpawnExecutor, req, tls_stream)
         .await
         .unwrap();
-    ws.set_auto_close(true);
     ws.set_auto_pong(true);
     Ok(fastwebsockets::FragmentCollector::new(ws))
 }

@@ -1,33 +1,31 @@
-mod binance;
-mod bitstamp;
+pub mod binance;
+pub mod bitstamp;
 
-use async_trait::async_trait;
-use error_stack::Result;
+use std;
+
+use async_trait;
+use error_stack::{Result, ResultExt};
 
 use crate::constants;
+use crate::constants::feed;
 use crate::error;
 use crate::feed::client;
 
 
-
-#[async_trait]
-pub trait Subscriber: Send {
-    async fn read_msg(&mut self) -> Result<String, error::ClientError>;
+#[async_trait::async_trait]
+pub trait Subscribe: Send {
     async fn subscribe_to_l2_snap(&mut self, instrument_name: &str) -> Result<(), error::SubscriberError>;
 }
 
-/// Builds a new, connected feed subscriber that's immediately usable
-pub struct Builder<'a> {feed: &'a constants::Feed}
+pub struct Subscriber<'a, T: feed::Feed> {
+    pub client: client::ws::ClientManager<'a>,
+    marker: std::marker::PhantomData<T>
+}
 
-impl<'a> Builder<'a> {
-    pub fn new(feed: &'a constants::Feed) -> Builder<'a> {Builder{feed}}
-    pub async fn connect(&self) -> Box<dyn Subscriber> {
-        let feed_info = self.feed.get_feed_info();
-        let client = client::ws::ClientManager::new(&feed_info).await.unwrap();
-
-        match self.feed {
-            constants::Feed::BinanceSpot => Box::new(binance::FeedSubscriber{client}),
-            constants::Feed::BitstampSpot => Box::new(bitstamp::FeedSubscriber{client}),
-        }
+impl<'a, T: feed::Feed> Subscriber<'a, T> {
+    pub async fn new(feed_info: constants::FeedInfo<'a>) -> Result<Subscriber<'a, T>, error::SubscriberError> {
+        let client = client::ws::ClientManager::new(feed_info).await
+            .change_context(error::SubscriberError)?;
+        Ok(Self{client, marker: std::marker::PhantomData})
     }
 }
