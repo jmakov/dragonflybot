@@ -78,10 +78,24 @@ impl Aggregator {
                     for order in sliced_bids.iter() { bids.push(order); }
                 }
 
-                asks.sort_by_key(|order| (order.price, order.amount));
-                bids.sort_by_key(|order| std::cmp::Reverse((order.price, order.amount)));
+                // sort asks by (price increasing, amount decreasing)
+                asks.sort_unstable_by(|a, b| {
+                    if a.price == b.price {
+                        b.amount.cmp(&a.amount)
+                    } else {
+                        a.price.cmp(&b.price)
+                    }
+                });
+                // sort bids by (price decreasing, amount decreasing)
+                bids.sort_unstable_by(|a, b| {
+                    if a.price == b.price {
+                        b.amount.cmp(&a.amount)
+                    } else {
+                        b.price.cmp(&a.price)
+                    }
+                });
 
-                for ask in &asks {
+                for ask in &asks[0..feed_aggregator::TOP_N_BBO] {
                     asks_grpc.push(
                         orderbook::Level {
                             exchange: ask.feed.feed_name_for_grpc_service().to_owned(),
@@ -89,7 +103,7 @@ impl Aggregator {
                             amount: ask.amount.to_f64().unwrap()
                         });
                 }
-                for bid in &bids {
+                for bid in &bids[0..feed_aggregator::TOP_N_BBO] {
                     bids_grpc.push(
                         orderbook::Level {
                             exchange: bid.feed.feed_name_for_grpc_service().to_owned(),
