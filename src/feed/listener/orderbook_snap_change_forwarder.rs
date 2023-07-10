@@ -151,7 +151,6 @@ where ws::Subscriber<'a, T>: Subscribe, Self: ParseMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::ClientError;
 
 
     //test different cases for this method
